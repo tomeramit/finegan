@@ -16,7 +16,7 @@ class GLU(nn.Module):
         nc = x.size(1)
         assert nc % 2 == 0, 'channels dont divide 2!'
         nc = int(nc/2)
-        return x[:, :nc] * F.sigmoid(x[:, nc:])
+        return x[:, :nc] * torch.sigmoid(x[:, nc:])
 
 
 def conv3x3(in_planes, out_planes):
@@ -33,7 +33,7 @@ def convlxl(in_planes, out_planes):
 
 def child_to_parent(child_c_code, classes_child, classes_parent):
     
-    ratio = classes_child / classes_parent
+    ratio = int(classes_child / classes_parent)
     arg_parent = torch.argmax(child_c_code,  dim = 1) / ratio
     parent_c_code = torch.zeros([child_c_code.size(0), classes_parent]).cuda()
     for i in range(child_c_code.size(0)):

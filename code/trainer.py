@@ -16,8 +16,8 @@ import torch.optim as optim
 import torchvision.utils as vutils
 from torch.nn.functional import softmax, log_softmax
 from torch.nn.functional import cosine_similarity
-from tensorboardX import summary
-from tensorboardX import FileWriter
+from torch.utils.tensorboard import summary
+from torch.utils.tensorboard import FileWriter
 from tqdm import tqdm
 
 from miscc.config import cfg
@@ -30,7 +30,7 @@ from model import G_NET, D_NET
 
 def child_to_parent(child_c_code, classes_child, classes_parent):
 
-    ratio = classes_child / classes_parent
+    ratio = int(classes_child / classes_parent)
     arg_parent = torch.argmax(child_c_code,  dim = 1) / ratio
     parent_c_code = torch.zeros([child_c_code.size(0), classes_parent]).cuda()
     for i in range(child_c_code.size(0)):
@@ -41,12 +41,12 @@ def child_to_parent(child_c_code, classes_child, classes_parent):
 def weights_init(m):
     classname = m.__class__.__name__
     if classname.find('Conv') != -1:
-        nn.init.orthogonal(m.weight.data, 1.0)
+        nn.init.orthogonal_(m.weight.data, 1.0)
     elif classname.find('BatchNorm') != -1:
         m.weight.data.normal_(1.0, 0.02)
         m.bias.data.fill_(0)
     elif classname.find('Linear') != -1:
-        nn.init.orthogonal(m.weight.data, 1.0)
+        nn.init.orthogonal_(m.weight.data, 1.0)
         if m.bias is not None:
             m.bias.data.fill_(0.0)
 
@@ -295,11 +295,11 @@ class FineGAN_trainer(object):
                 optD.step()
 
             if (flag == 0):
-                summary_D = summary.scalar('D_loss%d' % idx, errD.data[0])
+                summary_D = summary.scalar('D_loss%d' % idx, errD.item())
                 self.summary_writer.add_summary(summary_D, count)
-                summary_D_real = summary.scalar('D_loss_real_%d' % idx, errD_real.data[0])
+                summary_D_real = summary.scalar('D_loss_real_%d' % idx, errD_real.item())
                 self.summary_writer.add_summary(summary_D_real, count)
-                summary_D_fake = summary.scalar('D_loss_fake_%d' % idx, errD_fake.data[0])
+                summary_D_fake = summary.scalar('D_loss_fake_%d' % idx, errD_fake.item())
                 self.summary_writer.add_summary(summary_D_fake, count)
 
             return errD
@@ -338,11 +338,11 @@ class FineGAN_trainer(object):
 
             if flag == 0:
                 if i>0:
-                    summary_D_class = summary.scalar('Information_loss_%d' % i, errG_info.data[0])
+                    summary_D_class = summary.scalar('Information_loss_%d' % i, errG_info.item())
                     self.summary_writer.add_summary(summary_D_class, count)
 
                 if i == 0 or i == 2:
-                    summary_D = summary.scalar('G_loss%d' % i, errG.data[0])
+                    summary_D = summary.scalar('G_loss%d' % i, errG.item())
                     self.summary_writer.add_summary(summary_D, count)
 
         errG_total.backward()
@@ -438,7 +438,7 @@ class FineGAN_trainer(object):
                          Loss_D: %.2f Loss_G: %.2f Time: %.2fs
                       '''  
                   % (epoch, self.max_epoch, self.num_batches,
-                     errD_total.data[0], errG_total.data[0],
+                     errD_total.item(), errG_total.item(),
                      end_t - start_t))
 
         save_model(self.netG, avg_param_G, self.netsD, count, self.model_dir)
@@ -539,7 +539,7 @@ class FineGAN_trainer(object):
                              Loss_D: %.2f Loss_G: %.2f Time: %.2fs
                           '''  
                       % (count, cfg.TRAIN.HARDNEG_MAX_ITER, self.num_batches,
-                         errD_total.data[0], errG_total.data[0],
+                         errD_total.item(), errG_total.item(),
                          end_t - start_t))
 
             if (count == cfg.TRAIN.HARDNEG_MAX_ITER): # Hard negative training complete

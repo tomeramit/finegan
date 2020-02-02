@@ -61,7 +61,7 @@ def get_imgs(img_path, imsize, bbox=None,
     
     retf = []
     retc = []
-    re_cimg = transforms.Scale(imsize[1])(cimg)
+    re_cimg = transforms.Resize(imsize[1])(cimg)
     retc.append(normalize(re_cimg))
 
     # We use full image to get background patches
@@ -70,7 +70,7 @@ def get_imgs(img_path, imsize, bbox=None,
     # the receptive fields of the final convolution layer of background discriminator
     
     my_crop_width = 126	
-    re_fimg = transforms.Scale(int(my_crop_width * 76 / 64))(fimg)
+    re_fimg = transforms.Resize(int(my_crop_width * 76 / 64))(fimg)
     re_width, re_height = re_fimg.size
 
     # random cropping
