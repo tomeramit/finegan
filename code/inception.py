@@ -30,7 +30,7 @@ def inception_v3(pretrained=True, **kwargs):
         pretrained_dict = {k: v for k, v in pretrained_dict.items() if k in model_dict}
         model_dict.update(pretrained_dict) 
         model.load_state_dict(model_dict)
-	print ("Inception pretrained on IMAGENET loaded")
+        print ("Inception pretrained on IMAGENET loaded")
         return model
 
     return Inception3(**kwargs)

@@ -87,7 +87,6 @@ if __name__ == "__main__":
             transforms.RandomCrop(imsize),
             transforms.RandomHorizontalFlip()])
 
-
         from datasets import Dataset
         dataset = Dataset(cfg.DATA_DIR,
                               base_size=cfg.TREE.BASE_SIZE,
