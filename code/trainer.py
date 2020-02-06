@@ -598,26 +598,29 @@ class FineGAN_evaluator(object):
             background_class = cfg.TEST_BACKGROUND_CLASS 
             parent_class = cfg.TEST_PARENT_CLASS 
             child_class = cfg.TEST_CHILD_CLASS
-            bg_code = torch.zeros([self.batch_size, cfg.FINE_GRAINED_CATEGORIES])
-            p_code = torch.zeros([self.batch_size, cfg.SUPER_CATEGORIES])
-            c_code = torch.zeros([self.batch_size, cfg.FINE_GRAINED_CATEGORIES])
+            bg_code = torch.zeros([1, cfg.FINE_GRAINED_CATEGORIES])
+            p_code = torch.zeros([1, cfg.SUPER_CATEGORIES])
+            c_code = torch.zeros([1, cfg.FINE_GRAINED_CATEGORIES])
 
-            for j in range(self.batch_size):
-                bg_code[j][background_class] = 1
-                p_code[j][parent_class] = 1
-                c_code[j][child_class] = 1
+            for j in range(1):
+                background_class = j
+                parent_class = j
+                child_class = j
+                bg_code[0][background_class] = 1
+                p_code[0][parent_class] = 1
+                c_code[0][child_class] = 1
 
-            fake_imgs, fg_imgs, mk_imgs, fgmk_imgs = netG(noise, c_code, p_code, bg_code) # Forward pass through the generator
+                fake_imgs, fg_imgs, mk_imgs, fgmk_imgs = netG(noise, c_code, p_code, bg_code) # Forward pass through the generator
 
-            self.save_image(fake_imgs[0][0], self.save_dir, 'background')
-            self.save_image(fake_imgs[1][0], self.save_dir, 'parent_final')
-            self.save_image(fake_imgs[2][0], self.save_dir, 'child_final')
-            self.save_image(fg_imgs[0][0], self.save_dir, 'parent_foreground')
-            self.save_image(fg_imgs[1][0], self.save_dir, 'child_foreground')
-            self.save_image(mk_imgs[0][0], self.save_dir, 'parent_mask')
-            self.save_image(mk_imgs[1][0], self.save_dir, 'child_mask')
-            self.save_image(fgmk_imgs[0][0], self.save_dir, 'parent_foreground_masked')
-            self.save_image(fgmk_imgs[1][0], self.save_dir, 'child_foreground_masked')
+                self.save_image(fake_imgs[0][0], self.save_dir, 'background' + str(j))
+                self.save_image(fake_imgs[1][0], self.save_dir, 'parent_final' + str(j))
+                self.save_image(fake_imgs[2][0], self.save_dir, 'child_final' + str(j))
+                self.save_image(fg_imgs[0][0], self.save_dir, 'parent_foreground' + str(j))
+                self.save_image(fg_imgs[1][0], self.save_dir, 'child_foreground' + str(j))
+                self.save_image(mk_imgs[0][0], self.save_dir, 'parent_mask' + str(j))
+                self.save_image(mk_imgs[1][0], self.save_dir, 'child_mask' + str(j))
+                self.save_image(fgmk_imgs[0][0], self.save_dir, 'parent_foreground_masked' + str(j))
+                self.save_image(fgmk_imgs[1][0], self.save_dir, 'child_foreground_masked' + str(j))
 
 
     def save_image(self, images, save_dir, iname):
