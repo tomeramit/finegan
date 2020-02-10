@@ -88,8 +88,8 @@ def load_network(gpus):
 
     if cfg.TRAIN.NET_D != '':
         for i in range(len(netsD)):
-            print('Load %s_%d.pth' % (cfg.TRAIN.NET_D, i))
-            state_dict = torch.load('%s_%d.pth' % (cfg.TRAIN.NET_D, i))
+            print('Load %s%d.pth' % (cfg.TRAIN.NET_D, i))
+            state_dict = torch.load('%s%d.pth' % (cfg.TRAIN.NET_D, i))
             netsD[i].load_state_dict(state_dict)
 
     if cfg.CUDA:
@@ -195,19 +195,19 @@ class FineGAN_trainer(object):
         self.data_loader = data_loader
         self.num_batches = len(self.data_loader)
 
-
-
     def prepare_data(self, data):
-        fimgs, cimgs, c_code, _, warped_bbox = data
+        fimgs, cimgs, c_code, image_code, warped_bbox = data
 
         real_vfimgs, real_vcimgs = [], []
         if cfg.CUDA:
             vc_code = Variable(c_code).cuda()
+            vimage_code = Variable(image_code).long().cuda()
             for i in range(len(warped_bbox)):
                 warped_bbox[i] = Variable(warped_bbox[i]).float().cuda()
 
         else:
             vc_code = Variable(c_code)
+            vimage_code = Variable(image_code).long()
             for i in range(len(warped_bbox)):
                 warped_bbox[i] = Variable(warped_bbox[i])
 
@@ -218,7 +218,7 @@ class FineGAN_trainer(object):
             real_vfimgs.append(Variable(fimgs[0]))
             real_vcimgs.append(Variable(cimgs[0]))
 
-        return fimgs, real_vfimgs, real_vcimgs, vc_code, warped_bbox
+        return fimgs, real_vfimgs, real_vcimgs, vc_code, vimage_code, warped_bbox
 
     def train_Dnet(self, idx, count):
         if idx == 0 or idx == 2: # Discriminator is only trained in background and child stage. (NOT in parent stage)
@@ -227,15 +227,18 @@ class FineGAN_trainer(object):
             criterion, criterion_one = self.criterion, self.criterion_one
 
             netD, optD = self.netsD[idx], self.optimizersD[idx]
+
+            vimage_code = None
             if idx == 0:
                 real_imgs = self.real_fimgs[0]
 
             elif idx == 2:
+                vimage_code = self.vimage_code
                 real_imgs = self.real_cimgs[0]
        
             fake_imgs = self.fake_imgs[idx]
             netD.zero_grad()
-            real_logits = netD(real_imgs)
+            real_logits = netD(real_imgs, vimage_code)
 
             if idx == 2:
                 fake_labels = torch.zeros_like(real_logits[1])
@@ -264,7 +267,8 @@ class FineGAN_trainer(object):
                 norm_fact_fake = weights_real.shape[0]*weights_real.shape[1]*weights_real.shape[2]*weights_real.shape[3]
                 real_logits = ext, output
 
-            fake_logits = netD(fake_imgs.detach())
+
+            fake_logits = netD(fake_imgs.detach(), torch.argmax(self.c_code.long(), dim=1))
 
             if idx == 0: # Background stage
                 errD_real_uncond = criterion(real_logits[1], real_labels)  # Real/Fake loss for 'real background' (on patch level)
@@ -315,9 +319,8 @@ class FineGAN_trainer(object):
         criterion_one, criterion_class, c_code, p_code = self.criterion_one, self.criterion_class, self.c_code, self.p_code
 
         for i in range(self.num_Ds):
-            outputs = self.netsD[i](self.fake_imgs[i])
-
             if i == 0 or i == 2:  # real/fake loss for background (0) and child (2) stage
+                outputs = self.netsD[i](self.fake_imgs[i], torch.argmax(self.c_code.long(), dim=1))
                 real_labels = torch.ones_like(outputs[1])
                 errG = criterion_one(outputs[1], real_labels)
                 if i==0:
@@ -325,12 +328,13 @@ class FineGAN_trainer(object):
                     errG_classi = criterion_one(outputs[0], real_labels) # Background/Foreground classification loss for the fake background image (on patch level)
                     errG = errG + errG_classi
                 errG_total = errG_total + errG
-
+            # TODO change the discriminators to identify between also real image and it's p/c_code
+            # TODO change first on the class type only (to see that the conditional thing works)
             if i == 1: # Mutual information loss for the parent stage (1)
                     pred_p = self.netsD[i](self.fg_mk[i-1])
                     errG_info = criterion_class(pred_p[0], torch.nonzero(p_code.long())[:,1])
             elif i == 2: # Mutual information loss for the child stage (2)
-                    pred_c = self.netsD[i](self.fg_mk[i-1])
+                    pred_c = self.netsD[i](self.fg_mk[i-1], torch.argmax(self.c_code.long(), dim=1))
                     errG_info = criterion_class(pred_c[0], torch.nonzero(c_code.long())[:,1])
 
             if(i>0):
@@ -396,7 +400,7 @@ class FineGAN_trainer(object):
             for step, data in tqdm(enumerate(self.data_loader, 0), total=len(self.data_loader)):
                
                 self.imgs_tcpu, self.real_fimgs, self.real_cimgs, \
-                    self.c_code, self.warped_bbox = self.prepare_data(data)
+                    self.c_code, self.vimage_code, self.warped_bbox = self.prepare_data(data)
 
                 # Feedforward through Generator. Obtain stagewise fake images
                 noise.data.normal_(0, 1)
@@ -444,12 +448,13 @@ class FineGAN_trainer(object):
         save_model(self.netG, avg_param_G, self.netsD, count, self.model_dir)
 
         print ("Done with the normal training. Now performing hard negative training..")
+        old_count = count
         count = 0
         start_t = time.time()
-        for step, data in enumerate(self.data_loader, 0):
+        for step, data in tqdm(enumerate(self.data_loader, 0), total=len(self.data_loader)):
 
             self.imgs_tcpu, self.real_fimgs, self.real_cimgs, \
-                self.c_code, self.warped_bbox = self.prepare_data(data)
+                self.c_code, self.vimage_code, self.warped_bbox = self.prepare_data(data)
 
             if (count % 2) == 0: # Train on normal batch of images
 
@@ -491,7 +496,7 @@ class FineGAN_trainer(object):
                             all_hard_class[self.batch_size * hard_it : self.batch_size * (hard_it + 1)] = hard_class.data
                             self.fake_imgs, self.fg_imgs, self.mk_imgs, self.fg_mk = self.netG(hard_noise.detach(), hard_class.detach())
 
-                            fake_logits = self.netsD[2](self.fg_mk[1].detach())
+                            fake_logits = self.netsD[2](self.fg_mk[1].detach(), torch.argmax(self.c_code.long(), dim=1))
                             smax_class = softmax(fake_logits[0], dim = 1)
 
                             for b_it in range(self.batch_size):	
@@ -522,13 +527,13 @@ class FineGAN_trainer(object):
 
             if count % cfg.TRAIN.SNAPSHOT_INTERVAL_HARDNEG == 0:
                 backup_para = copy_G_params(self.netG)
-                save_model(self.netG, avg_param_G, self.netsD, count+500000, self.model_dir)
+                save_model(self.netG, avg_param_G, self.netsD, count+old_count, self.model_dir)
                 load_params(self.netG, avg_param_G)
                 self.netG.eval()
                 with torch.set_grad_enabled(False):
                     self.fake_imgs, self.fg_imgs, self.mk_imgs, self.fg_mk = self.netG(fixed_noise, self.c_code)
                 save_img_results(self.imgs_tcpu, (self.fake_imgs + self.fg_imgs + self.mk_imgs + self.fg_mk), self.num_Ds,
-                                 count, self.image_dir, self.summary_writer)
+                                 count+old_count, self.image_dir, self.summary_writer)
                 self.netG.train()
                 load_params(self.netG, backup_para)
 
@@ -545,7 +550,7 @@ class FineGAN_trainer(object):
             if (count == cfg.TRAIN.HARDNEG_MAX_ITER): # Hard negative training complete
                     break
 
-        save_model(self.netG, avg_param_G, self.netsD, count, self.model_dir)
+        save_model(self.netG, avg_param_G, self.netsD, count+old_count, self.model_dir)
         self.summary_writer.close()
 
 class FineGAN_evaluator(object):
@@ -563,24 +568,25 @@ class FineGAN_evaluator(object):
 
 
     def evaluate_finegan(self):
+        netG, netsD, _, count = load_network(self.gpus)
         if cfg.TRAIN.NET_G == '':
             print('Error: the path for model not found!')
         else:
             # Build and load the generator
-            netG = G_NET()
-            netG.apply(weights_init)
-            netG = torch.nn.DataParallel(netG, device_ids=self.gpus)
-            model_dict = netG.state_dict()
-
-            state_dict = \
-                torch.load(cfg.TRAIN.NET_G,
-                           map_location=lambda storage, loc: storage)
-
-            state_dict = {k: v for k, v in state_dict.items() if k in model_dict}
-
-            model_dict.update(state_dict)
-            netG.load_state_dict(model_dict)
-            print('Load ', cfg.TRAIN.NET_G)
+            # netG = G_NET()
+            # netG.apply(weights_init)
+            # netG = torch.nn.DataParallel(netG, device_ids=self.gpus)
+            # model_dict = netG.state_dict()
+            #
+            # state_dict = \
+            #     torch.load(cfg.TRAIN.NET_G,
+            #                map_location=lambda storage, loc: storage)
+            #
+            # state_dict = {k: v for k, v in state_dict.items() if k in model_dict}
+            #
+            # model_dict.update(state_dict)
+            # netG.load_state_dict(model_dict)
+            # print('Load ', cfg.TRAIN.NET_G)
 
             # Uncomment this to print Generator layers
             # print(netG)
@@ -598,13 +604,21 @@ class FineGAN_evaluator(object):
             background_class = cfg.TEST_BACKGROUND_CLASS 
             parent_class = cfg.TEST_PARENT_CLASS 
             child_class = cfg.TEST_CHILD_CLASS
-            bg_code = torch.zeros([1, cfg.FINE_GRAINED_CATEGORIES])
-            p_code = torch.zeros([1, cfg.SUPER_CATEGORIES])
-            c_code = torch.zeros([1, cfg.FINE_GRAINED_CATEGORIES])
 
-            for j in range(1):
-                background_class = j
-                parent_class = j
+            for j in range(100):
+                bg_code = torch.zeros([1, cfg.FINE_GRAINED_CATEGORIES])
+                p_code = torch.zeros([1, cfg.SUPER_CATEGORIES])
+                c_code = torch.zeros([1, cfg.FINE_GRAINED_CATEGORIES])
+
+                nz = cfg.GAN.Z_DIM
+                noise = torch.FloatTensor(self.batch_size, nz)
+                noise.data.normal_(0, 1)
+
+                if cfg.CUDA:
+                    noise = noise.cuda()
+
+                background_class = 0
+                parent_class = 0
                 child_class = j
                 bg_code[0][background_class] = 1
                 p_code[0][parent_class] = 1

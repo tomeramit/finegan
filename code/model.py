@@ -262,7 +262,7 @@ class G_NET(nn.Module):
         opp_mask_c = ones_mask_c - fake_img3_mask
         fg_masked3 = torch.mul(fake_img3_foreground, fake_img3_mask)
         fg_mk.append(fg_masked3)
-        bg_masked3 = torch.mul(fake_img2_final, opp_mask_c)	
+        bg_masked3 = torch.mul(fake_img2_final, opp_mask_c)
         fake_img3_final = fg_masked3 + bg_masked3  # Child image
         fake_imgs.append(fake_img3_final)
         fg_imgs.append(fake_img3_foreground)
@@ -309,6 +309,23 @@ def encode_parent_and_child_img(ndf): # Defines the encoder network used for par
     return encode_img
 
 
+def encode_parent_and_child_img_for_new_d(ndf): # Defines the encoder network used for parent and child image
+    encode_img = nn.Sequential(
+        nn.Conv2d(4, ndf, 4, 2, 1, bias=False),
+        nn.LeakyReLU(0.2, inplace=True),
+        nn.Conv2d(ndf, ndf * 2, 4, 2, 1, bias=False),
+        nn.BatchNorm2d(ndf * 2),
+        nn.LeakyReLU(0.2, inplace=True),
+        nn.Conv2d(ndf * 2, ndf * 4, 4, 2, 1, bias=False),
+        nn.BatchNorm2d(ndf * 4),
+        nn.LeakyReLU(0.2, inplace=True),
+        nn.Conv2d(ndf * 4, ndf * 8, 4, 2, 1, bias=False),
+        nn.BatchNorm2d(ndf * 8),
+        nn.LeakyReLU(0.2, inplace=True)
+    )
+    return encode_img
+
+
 def encode_background_img(ndf): # Defines the encoder network used for background image
     encode_img = nn.Sequential(
         nn.Conv2d(3, ndf, 4, 2, 0, bias=False),
@@ -319,6 +336,51 @@ def encode_background_img(ndf): # Defines the encoder network used for backgroun
         nn.LeakyReLU(0.2, inplace=True),
     )
     return encode_img
+
+
+class INIT_STAGE_D(nn.Module):
+    def __init__(self, ngf, c_flag):
+        super(INIT_STAGE_D, self).__init__()
+        self.gf_dim = ngf
+        self.c_flag= c_flag
+
+        if self.c_flag==1 :
+            self.in_dim = cfg.GAN.Z_DIM + cfg.SUPER_CATEGORIES
+        elif self.c_flag==2:
+            self.in_dim = cfg.GAN.Z_DIM + cfg.FINE_GRAINED_CATEGORIES
+
+        self.define_module()
+
+    def define_module(self):
+        in_dim = self.in_dim
+        ngf = self.gf_dim
+        self.fc = nn.Sequential(
+            nn.Linear(128, ngf * 4 * 4 * 2, bias=False),
+            nn.BatchNorm1d(ngf * 4 * 4 * 2),
+            GLU())
+        self.embeddings = nn.Embedding(200, 128)
+
+        self.upsample1 = upBlock(ngf, ngf // 2)
+        self.upsample2 = upBlock(ngf // 2, ngf // 4)
+        self.upsample3 = upBlock(ngf // 4, ngf // 8)
+        self.upsample4 = upBlock(ngf // 8, ngf // 16)
+        self.upsample5 = upBlock(ngf // 16, ngf // 16)
+
+
+    def forward(self, img, code):
+
+        # out_code = self.fc(code)
+        out_code = self.embeddings(code)
+        out_code = self.fc(out_code)
+        out_code = out_code.view(-1, self.gf_dim, 4, 4)
+        out_code = self.upsample1(out_code)
+        out_code = self.upsample2(out_code)
+        out_code = self.upsample3(out_code)
+        out_code = self.upsample4(out_code)
+        out_code = self.upsample5(out_code)
+        concated = torch.cat((img, out_code), 1)
+
+        return concated
 
 
 class D_NET(nn.Module):
@@ -368,9 +430,14 @@ class D_NET(nn.Module):
             self.uncond_logits = nn.Sequential(
             nn.Conv2d(ndf * 8, 1, kernel_size=4, stride=4),
             nn.Sigmoid())
+            # self.label_embeddings = nn.Embedding(self.ef_dim, self.ef_dim)
+            if self.stg_no == 2:
+                self.h_net1 = INIT_STAGE_D(16, 1)
+                self.img_code_s16 = encode_parent_and_child_img_for_new_d(ndf)
+            else:
+                self.img_code_s16 = encode_parent_and_child_img(ndf)
 
-
-    def forward(self, x_var):
+    def forward(self, x_var, code=None):
 
         if self.stg_no == 0:
             x_code = self.patchgan_img_code_s16(x_var)
@@ -378,8 +445,25 @@ class D_NET(nn.Module):
             rf_score = self.uncond_logits2(x_code) # Real/Fake score for the background image
             return [classi_score, rf_score]
 
-        elif self.stg_no > 0:
+        elif self.stg_no == 1:
             x_code = self.img_code_s16(x_var)
+            x_code = self.img_code_s32(x_code)
+            x_code = self.img_code_s32_1(x_code)
+            h_c_code = self.jointConv(x_code)
+            code_pred = self.logits(h_c_code) # Predicts the parent code and child code in parent and child stage respectively
+            rf_score = self.uncond_logits(x_code) # This score is not used in parent stage while training
+            return [code_pred.view(-1, self.ef_dim), rf_score.view(-1)]
+
+        elif self.stg_no == 2:
+            # self.label_embeddings = self.label_embeddings(code)
+            x_var2 = self.h_net1(x_var, code)
+            # s_size = x_var.size(2)
+            # code = code.view(-1, self.ef_dim, 1, 1)
+            # code = code.repeat(1, 1, s_size, s_size)
+            # h_c_code = torch.cat((code, x_var), 1)
+            # out_code = self.jointConv(h_c_code)
+
+            x_code = self.img_code_s16(x_var2)
             x_code = self.img_code_s32(x_code)
             x_code = self.img_code_s32_1(x_code)
             h_c_code = self.jointConv(x_code)

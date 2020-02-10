@@ -180,11 +180,16 @@ class Dataset(data.Dataset):
         fimgs, cimgs, warped_bbox = get_imgs(img_name, self.imsize,
                         bbox, self.transform, normalize=self.norm)
 
+        # TODO make c_code and p_code generation logical (i.e. random from type of head, but head has to be something)
         rand_class= random.sample(range(cfg.FINE_GRAINED_CATEGORIES),1) # Randomly generating child code during training
         c_code = torch.zeros([cfg.FINE_GRAINED_CATEGORIES,])
         c_code[rand_class] = 1
 
-        return fimgs, cimgs, c_code, key, warped_bbox 
+        image_class_value = int(key.split(r"/")[0].split(r".")[0]) - 1
+        # image_class_code = torch.zeros([cfg.FINE_GRAINED_CATEGORIES,])
+        # image_class_code[image_class_value] = 1
+
+        return fimgs, cimgs, c_code, image_class_value, warped_bbox
 
     def prepair_test_pairs(self, index):
         key = self.filenames[index]
